@@ -12,7 +12,7 @@ RUN rm -rf /usr/lib/python3/dist-packages/setuptools*
 RUN pip install setuptools -U
 
 # TensorRT LLM
-RUN pip install tensorrt-llm~=0.11 -U
+RUN pip install tensorrt-llm~=0.12.0.dev2024070200 -U
 
 # Modelopt
 ARG MODELOPT_VERSION=0.15.0
@@ -23,7 +23,7 @@ RUN python -c "import modelopt"
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
 
 # TRT-LLM 0.11 installs transformer-engine 1.4 by default, which prevent TRT-LLM from working with the newer ModelOpt.
-RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
+#RUN pip install git+https://github.com/NVIDIA/TransformerEngine.git@stable
 
 # Medusa
 # Replace is_flash_attn_available with is_flash_attn_2_available as it no longer exists in transformers
@@ -37,7 +37,8 @@ RUN git clone https://github.com/FasterDecoding/Medusa.git && \
 RUN apt-get install -y jq
 
 # TensorRT dev environment installation.
-ARG TENSORRT_URL=https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.0.1/tars/TensorRT-10.0.1.6.Linux.x86_64-gnu.cuda-12.4.tar.gz
+#ARG TENSORRT_URL=https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.0.1/tars/TensorRT-10.0.1.6.Linux.x86_64-gnu.cuda-12.4.tar.gz
+ARG TENSORRT_URL=https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.3.0/tars/TensorRT-10.3.0.26.Linux.x86_64-gnu.cuda-12.5.tar.gz
 RUN wget -q -O tensorrt.tar.gz $TENSORRT_URL && \
     tar -xf tensorrt.tar.gz && \
     cp TensorRT-*/bin/trtexec /usr/local/bin && \
@@ -55,7 +56,7 @@ RUN cd examples/plugins && make -j $(nproc)
 ENV LD_LIBRARY_PATH=$TRT_LIBPATH:$LD_LIBRARY_PATH
 
 # Clone the TesnorRT repo
-RUN git clone --depth 1 --branch v10.0.1 https://github.com/NVIDIA/TensorRT.git
+RUN git clone --depth 1 --branch v10.3.0 https://github.com/NVIDIA/TensorRT.git
 
 # Install the example requirements
 COPY llm_ptq examples/llm_ptq

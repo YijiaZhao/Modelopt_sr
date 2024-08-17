@@ -23,7 +23,13 @@ import argparse
 
 import torch
 from config import SDXL_FP8_DEFAULT_CONFIG, get_int8_config
-from diffusers import DiffusionPipeline, StableDiffusion3Pipeline, StableDiffusionPipeline
+from diffusers import (
+    ControlNetModel,
+    DPMSolverMultistepScheduler,
+    StableDiffusionLatentUpscalePipeline,
+    StableDiffusionControlNetPipeline
+)
+from diffusers import DiffusionPipeline, StableDiffusionPipeline
 from onnx_utils.export import generate_fp8_scales, modelopt_export_sd
 from utils import check_lora, filter_func, load_calib_prompts, quantize_lvl, set_fmha
 
@@ -35,6 +41,8 @@ MODEL_ID = {
     "sdxl-turbo": "stabilityai/sdxl-turbo",
     "sd1.5": "runwayml/stable-diffusion-v1-5",
     "sd3-medium": "stabilityai/stable-diffusion-3-medium-diffusers",
+    "sd_controlnet": "RV_V51_noninpainting",
+    "sdsr": "sd-x2-latent-upscaler",
 }
 
 
@@ -42,14 +50,37 @@ def do_calibrate(pipe, calibration_prompts, **kwargs):
     for i_th, prompts in enumerate(calibration_prompts):
         if i_th >= kwargs["calib_size"]:
             return
+        # pipe(
+        #     prompt=prompts,
+        #     num_inference_steps=kwargs["n_steps"],
+        #     negative_prompt=[
+        #         "normal quality, low quality, worst quality, low res, blurry, nsfw, nude"
+        #     ]
+        #     * len(prompts),
+        # ).images
+        # pipe(
+        #     prompt=prompts,
+        #     negative_prompt=[
+        #         "normal quality, low quality, worst quality, low res, blurry, nsfw, nude"
+        #     ]
+        #     * len(prompts),
+        #     # output_type="latent",
+        #     image=[torch.load("/root/Product_AIGC/test_control_temp_input/input_image_0.pt"), torch.load("/root/Product_AIGC/test_control_temp_input/input_image_1.pt")],
+        #     generator=torch.manual_seed(11557),
+        #     num_inference_steps=kwargs["n_steps"],
+        #     guidance_scale=7.5,
+        #     # strength=1.0,
+        #     controlnet_conditioning_scale=[1.0, 1.0]).images
         pipe(
             prompt=prompts,
-            num_inference_steps=kwargs["n_steps"],
             negative_prompt=[
                 "normal quality, low quality, worst quality, low res, blurry, nsfw, nude"
             ]
             * len(prompts),
-        ).images
+            image=(torch.load("/dit/sr_input_latent.pt"))[0:2],
+            generator=torch.manual_seed(11557),
+            num_inference_steps=kwargs["n_steps"],
+            guidance_scale=0).images
 
 
 def main():
@@ -65,6 +96,8 @@ def main():
             "sdxl-turbo",
             "sd1.5",
             "sd3-medium",
+            "sd_controlnet",
+            "sdsr",
         ],
     )
     parser.add_argument(
@@ -119,6 +152,21 @@ def main():
         pipe = StableDiffusion3Pipeline.from_pretrained(
             MODEL_ID[args.model], torch_dtype=torch.float16
         )
+    elif args.model == "sd_controlnet":
+        controlnets = []
+        controlnets.append(ControlNetModel.from_pretrained("/dit/checkpoints/control_v11p_sd15_inpaint", torch_dtype=torch.float16))
+        controlnets.append(ControlNetModel.from_pretrained("/dit/checkpoints/7f2f69197050967007f6bbd23ab5e52f0384162a", torch_dtype=torch.float16))
+        pipe = StableDiffusionControlNetPipeline.from_pretrained(
+            "/dit/checkpoints/RV_V51_noninpainting",
+            controlnet = controlnets,
+            safety_checker = None,
+            torch_dtype = torch.float16
+        )
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+            pipe.scheduler.config, use_karras_sigmas=True
+        )
+    elif args.model == "sdsr":
+        pipe = StableDiffusionLatentUpscalePipeline.from_pretrained("/root/.cache/huggingface/hub/models--stabilityai--sd-x2-latent-upscaler/snapshots/416b1f2c11d0abe15a73e2f30c697c408dfdb2a9/", torch_dtype=torch.float16)
     else:
         pipe = DiffusionPipeline.from_pretrained(
             MODEL_ID[args.model],
@@ -141,12 +189,12 @@ def main():
             "./calib/calib_prompts.txt",
         )
         extra_step = (
-            1 if args.model == "sd1.5" else 0
+            1 if args.model == "sd1.5" or args.model == "sdsr" or args.model == "sd_controlnet" else 0
         )  # Depending on the scheduler. some schedulers will do n+1 steps
         if args.format == "int8":
             # Making sure to use global_min in the calibrator for SD 1.5
             assert args.collect_method != "default"
-            if args.model == "sd1.5":
+            if args.model == "sd1.5" or args.model == "sdsr" or args.model == "sd_controlnet":
                 args.collect_method = "global_min"
             quant_config = get_int8_config(
                 backbone,

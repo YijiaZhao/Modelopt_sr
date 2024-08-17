@@ -75,6 +75,26 @@ AXES_NAME = {
         "pooled_projections": {0: "batch_size"},
         "sample": {0: "batch_size", 1: "num_channels", 2: "height", 3: "width"},
     },
+    "sd_controlnet": {
+        # 目前动态这边暂时只考虑了merge的情况
+        # "sample": {0: '2B', 2: 'H', 3: 'W'},
+        # # "timestep": {0: "steps"},
+        # "encoder_hidden_states": {0: '2B'},
+        # 'images': {1: '2B', 3: '8H', 4: '8W'},
+        # "latent": {0: '2B', 2: 'H', 3: 'W'},
+        "sample": {0: "batch_size", 2: "height", 3: "width"},
+        "timestep": {0: "steps"},
+        "encoder_hidden_states": {0: "batch_size"},
+        "timestep_cond": {0: "batch_size"},
+        "latent": {0: "batch_size", 2: "height", 3: "width"},
+    },
+    "sdsr": {
+        "sample": {0: "batch_size", 2: "height", 3: "width"},
+        "timestep": {0: "steps"},
+        "encoder_hidden_states": {0: "batch_size"},
+        "timestep_cond": {0: "batch_size"},
+        "latent": {0: "batch_size", 2: "height", 3: "width"},
+    },
 }
 
 # Per-tensor for INT8, we will convert it to FP8 later in onnxgraphsurgeon
@@ -131,6 +151,24 @@ def generate_dummy_inputs(sd_version, device):
         dummy_input["sample"] = torch.ones(2, 4, 64, 64).to(device).half()
         dummy_input["timestep"] = torch.ones(1).to(device).half()
         dummy_input["encoder_hidden_states"] = torch.ones(2, 16, 768).to(device).half()
+    elif sd_version == "sd_controlnet":
+        # 当sd_controlnet并且只输出unet的时候采用下面调用方法
+        # dummy_input["sample"] = torch.ones(8, 4, 64, 64).to(device)
+        # dummy_input["timestep"] = torch.ones(1).to(device)
+        # dummy_input["encoder_hidden_states"] = torch.ones(8, 77, 768).to(device)
+        # dummy_input["down_block_additional_residuals"] = down_block_res_samples_cpu
+        # dummy_input["mid_block_additional_residual"] = torch.ones(8, 1280, 8, 8).to(device)
+        # 采用merge或者只输出sd_controlnet中的controlnet可以用下面这个
+        dummy_input["sample"] = torch.ones(8, 4, 64, 64).to(device).half()
+        dummy_input["timestep"] = torch.ones(1).to(device).half()
+        dummy_input["encoder_hidden_states"] = torch.ones(8, 77, 768).to(device).half()
+        dummy_input["images"] = torch.ones(2, 8, 3, 512, 512).to(device).half()
+        dummy_input["controlnet_scales"] = torch.ones(2).to(device).half()
+    elif sd_version == "sdsr":
+        dummy_input["sample"] = torch.ones(2, 8, 128, 128).to(device).half()
+        dummy_input["timestep"] = torch.ones(1).to(device).half()
+        dummy_input["encoder_hidden_states"] = torch.ones(2, 77, 768).to(device).half()
+        dummy_input["timestep_cond"] = torch.ones(2, 896).to(device).half()
     else:
         raise NotImplementedError(f"Unsupported sd_version: {sd_version}")
 
@@ -151,6 +189,25 @@ def modelopt_export_sd(backbone, onnx_dir, model_name):
     elif model_name == "sd3-medium":
         input_names = ["hidden_states", "encoder_hidden_states", "pooled_projections", "timestep"]
         output_names = ["sample"]
+    elif model_name == "sd_controlnet":
+        # 采用merge或者只输出sd_controlnet中的controlnet可以用下面这个
+        input_names = ['sample', 'timestep', 'encoder_hidden_states', 'images', 'controlnet_scales']
+        # 当sd_controlnet并且只输出unet的时候采用下面调用方法
+        # down_block_names = [f"down_block_{i}" for i in range(12)]
+        # input_names = ['sample', 'timestep', 'encoder_hidden_states', 
+        #                *down_block_names,
+        #                 # 'down_block_res_samples_0','down_block_res_samples_1','down_block_res_samples_2','down_block_res_samples_3',
+        #                 # 'down_block_res_samples_4','down_block_res_samples_5','down_block_res_samples_6','down_block_res_samples_7',
+        #                 # 'down_block_res_samples_8','down_block_res_samples_9','down_block_res_samples_10','down_block_res_samples_11',
+        #                 'mid_block_res_sample']
+        output_names = ["latent"]
+        # output_names = ['down_block_res_samples_0','down_block_res_samples_1','down_block_res_samples_2','down_block_res_samples_3',
+        #                 'down_block_res_samples_4','down_block_res_samples_5','down_block_res_samples_6','down_block_res_samples_7',
+        #                 'down_block_res_samples_8','down_block_res_samples_9','down_block_res_samples_10','down_block_res_samples_11',
+        #                 'mid_block_res_sample']
+    elif model_name == "sdsr":
+        input_names = ["sample", "timestep", "encoder_hidden_states", "timestep_cond"]
+        output_names = ["latent"]
     else:
         raise NotImplementedError(f"Unsupported sd_version: {model_name}")
 
